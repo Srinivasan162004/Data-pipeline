@@ -1,0 +1,233 @@
+# full_data_pipeline.py
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+import sys
+import time
+import logging
+from sklearn.impute import SimpleImputer
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import classification_report
+
+# -----------------------------
+# Logging
+# -----------------------------
+logging.basicConfig(filename='pipeline.log', level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# -----------------------------
+# 1. Load data
+# -----------------------------
+def load_data(file_path):
+    logging.info(f"Loading data from {file_path}...")
+    if file_path.endswith(('.xlsx', '.xls')):
+        df = pd.read_excel(file_path)
+    elif file_path.endswith('.csv'):
+        df = pd.read_csv(file_path)
+    else:
+        raise ValueError("Unsupported file format")
+    logging.info(f"Data shape: {df.shape}")
+    return df
+
+# -----------------------------
+# 2. Clean data (duplicates + negative values)
+# -----------------------------
+def clean_data(df):
+    logging.info("Removing duplicates...")
+    df = df.drop_duplicates()
+    logging.info(f"Shape after duplicates removed: {df.shape}")
+
+    logging.info("Removing rows with negative numeric values...")
+    numeric_cols = df.select_dtypes(include=np.number).columns
+    if len(numeric_cols) > 0:
+        df = df[(df[numeric_cols] >= 0).all(axis=1)]
+    logging.info(f"Shape after removing negative values: {df.shape}")
+
+    df = df.reset_index(drop=True)
+    return df
+
+# -----------------------------
+# 3. Handle missing values
+# -----------------------------
+def handle_missing_values(df):
+    logging.info("Handling missing values...")
+    numeric_cols = df.select_dtypes(include=np.number).columns
+    df[numeric_cols] = SimpleImputer(strategy='mean').fit_transform(df[numeric_cols])
+
+    cat_cols = df.select_dtypes(include='object').columns
+    for col in cat_cols:
+        if df[col].isnull().sum() > 0:
+            df[col] = df[col].fillna(df[col].mode()[0])
+    logging.info("Missing values handled.")
+    return df
+
+# -----------------------------
+# 4. Basic analysis
+# -----------------------------
+def basic_analysis(df):
+    logging.info("Performing basic analysis...")
+    print(df.describe(include='all'))
+
+# -----------------------------
+# 5. Visualizations
+# -----------------------------
+def visualize_data(df):
+    logging.info("Generating visualizations...")
+    numeric_cols = df.select_dtypes(include=np.number).columns
+    for col in numeric_cols:
+        plt.figure(figsize=(6,4))
+        plt.hist(df[col].dropna(), bins=30, alpha=0.7, color='skyblue', edgecolor='black')
+        plt.title(f'Distribution of {col}')
+        plt.xlabel(col)
+        plt.ylabel('Frequency')
+        plt.tight_layout()
+        plt.savefig(f'{col}_distribution.png')
+        plt.show()
+        plt.close()
+    logging.info("Visualizations saved and displayed.")
+
+# -----------------------------
+# 6. Advanced analysis (Random Forest)
+# -----------------------------
+def advanced_analysis(df, target_col):
+    logging.info(f"Running advanced analysis on target column '{target_col}'...")
+    if target_col not in df.columns:
+        logging.warning(f"Target column '{target_col}' not found.")
+        return
+    X = df.drop(columns=[target_col])
+    y = df[target_col]
+
+    X = pd.get_dummies(X)
+    if y.dtype == 'object':
+        from sklearn.preprocessing import LabelEncoder
+        y = LabelEncoder().fit_transform(y)
+
+    X = X.fillna(X.mean())
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=42)
+    clf = RandomForestClassifier(n_estimators=100, random_state=42)
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
+    print(classification_report(y_test, y_pred))
+
+# -----------------------------
+# 7. Real-time simulation
+# -----------------------------
+def real_time_simulation(df, delay=2):
+    logging.info("Starting real-time simulation...")
+    for i, row in df.iterrows():
+        print(f"Real-time data row {i}: {row.to_dict()}")
+        time.sleep(delay)
+        if i >= 5:  # first 5 rows for demo
+            break
+    logging.info("Real-time simulation ended.")
+
+# -----------------------------
+# 8. Export reports
+# -----------------------------
+def export_reports(df, excel_path='summary.xlsx', ppt_path='summary.pptx', cleaned_path='cleaned_online_retail.xlsx'):
+    logging.info("Exporting reports...")
+
+    # Save cleaned full dataset
+    df.to_excel(cleaned_path, index=False)
+    logging.info(f"Cleaned dataset exported to {cleaned_path}")
+
+    # Summary statistics
+    summary = df.describe(include='all')
+    summary.to_excel(excel_path)
+    logging.info(f"Summary exported to {excel_path}")
+
+    # PowerPoint export
+    try:
+        from pptx import Presentation
+        from pptx.util import Inches
+        prs = Presentation()
+        slide = prs.slides.add_slide(prs.slide_layouts[5])
+        textbox = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(8), Inches(5))
+        tf = textbox.text_frame
+        tf.text = "Data Summary:\n\n" + str(summary)
+        prs.save(ppt_path)
+        logging.info(f"Summary exported to {ppt_path}")
+    except ImportError:
+        logging.warning("python-pptx not installed, skipping PowerPoint export.")
+
+    # Excel formatting (highlight high values)
+    try:
+        from openpyxl import load_workbook
+        from openpyxl.styles import PatternFill
+
+        wb = load_workbook(excel_path)
+        ws = wb.active
+        yellow_fill = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
+        for row in ws.iter_rows(min_row=2, max_col=ws.max_column, max_row=ws.max_row):
+            for cell in row:
+                if isinstance(cell.value, (int, float)) and cell.value > 1000:
+                    cell.fill = yellow_fill
+        wb.save('summary_formatted.xlsx')
+        logging.info("Formatted Excel saved as summary_formatted.xlsx")
+    except ImportError:
+        logging.warning("openpyxl not installed, skipping Excel formatting.")
+
+# -----------------------------
+# 9. Open files
+# -----------------------------
+def open_file(file_path):
+    logging.info(f"Opening file: {file_path}")
+    try:
+        if sys.platform == "win32":
+            os.startfile(file_path)
+        elif sys.platform == "darwin":
+            os.system(f"open {file_path}")
+        else:
+            os.system(f"xdg-open {file_path}")
+    except Exception as e:
+        logging.error(f"Could not open file: {e}")
+
+# -----------------------------
+# 10. Optional Streamlit dashboard
+# -----------------------------
+def run_dashboard(file_path):
+    import streamlit as st
+    df = pd.read_excel(file_path)
+    st.title("Data Dashboard")
+    st.subheader("Data Preview")
+    st.dataframe(df.head())
+    st.subheader("Numeric Column Distributions")
+    numeric_cols = df.select_dtypes(include='number').columns
+    for col in numeric_cols:
+        fig, ax = plt.subplots()
+        ax.hist(df[col].dropna(), bins=30, color='skyblue', edgecolor='black')
+        ax.set_title(f'Distribution of {col}')
+        st.pyplot(fig)
+
+# -----------------------------
+# Main
+# -----------------------------
+def main():
+    file_path = r"C:\Users\Padmavathi\Downloads\Online Retail.xlsx"
+
+    if not os.path.exists(file_path):
+        logging.error(f"File {file_path} not found.")
+        return
+
+    # Run full pipeline
+    df = load_data(file_path)
+    df = clean_data(df)
+    df = handle_missing_values(df)
+    basic_analysis(df)
+    visualize_data(df)
+    real_time_simulation(df)
+    export_reports(df)
+    open_file('summary.xlsx')
+    open_file('summary.pptx')
+    open_file('cleaned_online_retail.xlsx')
+
+    # Optional advanced analysis
+    # advanced_analysis(df, target_col='YourTargetColumn')
+
+    # Optional Streamlit dashboard
+    # run_dashboard('cleaned_online_retail.xlsx')
+
+if __name__ == "__main__":
+    main()
